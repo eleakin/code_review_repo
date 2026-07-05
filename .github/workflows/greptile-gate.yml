@@ -62,11 +62,23 @@ jobs:
             const { owner, repo } = context.repo;
 
             if (score >= threshold) {
-              await github.rest.pulls.createReview({
-                owner, repo, pull_number: prNumber,
-                event: 'APPROVE',
-                body: `✅ Greptile scored this PR **${score}/5** (threshold: ${threshold}/5). Auto-approving.`,
-              });
+              const verdict = `✅ Greptile scored this PR **${score}/5** (threshold: ${threshold}/5). Auto-approving.`;
+              try {
+                await github.rest.pulls.createReview({
+                  owner, repo, pull_number: prNumber,
+                  event: 'APPROVE',
+                  body: verdict,
+                });
+              } catch (e) {
+                // Most common cause: "Allow GitHub Actions to create and
+                // approve pull requests" is disabled in Settings > Actions >
+                // General. Fall back to a comment so the verdict still lands.
+                core.warning(`Could not post approval review: ${e.message}`);
+                await github.rest.issues.createComment({
+                  owner, repo, issue_number: prNumber,
+                  body: `${verdict}\n\n⚠️ Formal approval failed (**${e.message}**). Enable "Allow GitHub Actions to create and approve pull requests" under Settings → Actions → General, or the gate can only label/comment.`,
+                });
+              }
               await github.rest.issues.addLabels({
                 owner, repo, issue_number: prNumber,
                 labels: ['greptile-approved'],
