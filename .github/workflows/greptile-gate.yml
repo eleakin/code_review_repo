@@ -1,0 +1,96 @@
+name: Greptile Score Gate
+
+# Fires when Greptile (GitHub App) posts its review on a PR — either as a
+# PR review or as an issue comment. Parses the X/5 score from the review
+# body and, if the score meets the threshold, approves the PR (and
+# optionally enables auto-merge).
+
+on:
+  issue_comment:
+    types: [created, edited]
+  pull_request_review:
+    types: [submitted, edited]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  # Minimum Greptile score (out of 5) required to auto-approve.
+  SCORE_THRESHOLD: "4"
+
+jobs:
+  gate:
+    # Only run for comments/reviews on PRs, authored by the Greptile bot.
+    if: >
+      (github.event_name == 'pull_request_review' && contains(github.event.review.user.login, 'greptile')) ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request && contains(github.event.comment.user.login, 'greptile'))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Parse score and gate
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const threshold = parseFloat(process.env.SCORE_THRESHOLD);
+            const isReview = context.eventName === 'pull_request_review';
+            const body = isReview
+              ? (context.payload.review.body || '')
+              : (context.payload.comment.body || '');
+            const prNumber = isReview
+              ? context.payload.pull_request.number
+              : context.payload.issue.number;
+
+            // Greptile phrases the score a few ways; try specific patterns
+            // first, then fall back to any "N/5" in the body.
+            const patterns = [
+              /confidence\s*score:?\s*\**\s*(\d+(?:\.\d+)?)\s*\/\s*5/i,
+              /score:?\s*\**\s*(\d+(?:\.\d+)?)\s*\/\s*5/i,
+              /(\d+(?:\.\d+)?)\s*\/\s*5/,
+            ];
+            let score = null;
+            for (const p of patterns) {
+              const m = body.match(p);
+              if (m) { score = parseFloat(m[1]); break; }
+            }
+
+            if (score === null) {
+              core.info('No X/5 score found in this Greptile comment; skipping.');
+              return;
+            }
+            core.info(`Greptile score: ${score}/5 (threshold ${threshold}) on PR #${prNumber}`);
+
+            const { owner, repo } = context.repo;
+
+            if (score >= threshold) {
+              await github.rest.pulls.createReview({
+                owner, repo, pull_number: prNumber,
+                event: 'APPROVE',
+                body: `✅ Greptile scored this PR **${score}/5** (threshold: ${threshold}/5). Auto-approving.`,
+              });
+              await github.rest.issues.addLabels({
+                owner, repo, issue_number: prNumber,
+                labels: ['greptile-approved'],
+              });
+
+              // Auto-merge only if the repo variable AUTO_MERGE is "true".
+              const autoMerge = '${{ vars.AUTO_MERGE }}' === 'true';
+              if (autoMerge) {
+                try {
+                  await github.rest.pulls.merge({
+                    owner, repo, pull_number: prNumber, merge_method: 'squash',
+                  });
+                  core.info('PR merged.');
+                } catch (e) {
+                  core.warning(`Merge failed (branch protection or conflicts?): ${e.message}`);
+                }
+              }
+            } else {
+              await github.rest.issues.addLabels({
+                owner, repo, issue_number: prNumber,
+                labels: ['greptile-changes-requested'],
+              });
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: prNumber,
+                body: `❌ Greptile scored this PR **${score}/5**, below the ${threshold}/5 threshold. Address the review comments and push a fix to re-run the review.`,
+              });
+            }
