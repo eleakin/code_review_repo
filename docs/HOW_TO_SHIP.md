@@ -51,14 +51,19 @@ printed — fix and re-run), `2` = setup problem or review timeout.
   rather than posting a new one.
 - A passing PR gets an approving review from `github-actions` plus the
   `greptile-approved` label.
-- A failing PR gets the `greptile-changes-requested` label and a comment
-  telling you to address the feedback.
+- A failing PR gets the `greptile-changes-requested` and
+  `needs-human-review` labels, and **you are assigned and @mentioned** so
+  GitHub notifies you to review it. After your review, re-trigger the
+  pipeline by (a) pushing a fix, (b) commenting `@greptileai` on the PR,
+  or (c) clicking "Re-trigger Greptile" in Greptile's summary comment.
+  A passing re-review clears the failure labels and approves the PR.
 
 ## Options
 
 | Want | Do |
 |---|---|
 | Auto-merge passing PRs | Add repo Actions **variable** `AUTO_MERGE` = `true` |
+| Prompt someone else on failures | Add repo Actions **variable** `REVIEW_PROMPT_USER` = their GitHub username (defaults to the repo owner) |
 | Stricter/looser gate | Edit `SCORE_THRESHOLD` in `.github/workflows/greptile-gate.yml` |
 | Different poll timeout | `python scripts/greptile_loop.py --timeout 1200` |
 

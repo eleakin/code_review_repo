@@ -83,6 +83,14 @@ jobs:
                 owner, repo, issue_number: prNumber,
                 labels: ['greptile-approved'],
               });
+              // Clear failure markers left by earlier review rounds.
+              for (const label of ['greptile-changes-requested', 'needs-human-review']) {
+                try {
+                  await github.rest.issues.removeLabel({
+                    owner, repo, issue_number: prNumber, name: label,
+                  });
+                } catch (e) { /* label wasn't present */ }
+              }
 
               // Auto-merge only if the repo variable AUTO_MERGE is "true".
               const autoMerge = '${{ vars.AUTO_MERGE }}' === 'true';
@@ -99,10 +107,34 @@ jobs:
             } else {
               await github.rest.issues.addLabels({
                 owner, repo, issue_number: prNumber,
-                labels: ['greptile-changes-requested'],
+                labels: ['greptile-changes-requested', 'needs-human-review'],
               });
+
+              // Prompt a human: assign the reviewer (assignment sends a
+              // GitHub notification, and works even when the reviewer is
+              // the PR author). Defaults to the repo owner; override with
+              // the REVIEW_PROMPT_USER repo variable.
+              const reviewer = '${{ vars.REVIEW_PROMPT_USER }}' || context.repo.owner;
+              try {
+                await github.rest.issues.addAssignees({
+                  owner, repo, issue_number: prNumber, assignees: [reviewer],
+                });
+              } catch (e) {
+                core.warning(`Could not assign ${reviewer}: ${e.message}`);
+              }
+
               await github.rest.issues.createComment({
                 owner, repo, issue_number: prNumber,
-                body: `❌ Greptile scored this PR **${score}/5**, below the ${threshold}/5 threshold. Address the review comments and push a fix to re-run the review.`,
+                body: [
+                  `❌ Greptile scored this PR **${score}/5**, below the ${threshold}/5 threshold.`,
+                  ``,
+                  `@${reviewer} — your review is requested. Look over Greptile's comments and the diff, then re-trigger the pipeline in any of these ways:`,
+                  ``,
+                  `1. **Push a fix** — any new commit automatically triggers a fresh Greptile review and re-runs this gate.`,
+                  `2. **Comment \`@greptileai\`** on this PR to re-run the review without new commits (e.g. after dismissing findings as not applicable).`,
+                  `3. **Click "Re-trigger Greptile"** in the footer of Greptile's summary comment above.`,
+                  ``,
+                  `When the new review scores ${threshold}/5 or higher, this gate will approve the PR automatically.`,
+                ].join('\n'),
               });
             }
