@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Never commit real credentials
+Credentials.R
+credentials.R
+cresentials_R.txt
